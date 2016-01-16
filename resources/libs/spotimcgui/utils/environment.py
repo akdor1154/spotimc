@@ -22,6 +22,8 @@ import sys
 import os.path
 import platform
 import xbmc
+import os
+import imp
 
 
 def set_library_paths():
@@ -31,8 +33,18 @@ def set_library_paths():
     sys.path.insert(0, os.path.join(libs_dir, "xbmc-skinutils/src"))
     sys.path.insert(0, os.path.join(libs_dir, "cherrypy"))
     sys.path.insert(0, os.path.join(libs_dir, "taskutils/src"))
-    sys.path.insert(0, os.path.join(libs_dir, "pyspotify-ctypes/src"))
-    sys.path.insert(0, os.path.join(libs_dir, "pyspotify-ctypes-proxy/src"))
+    sys.path.insert(0, os.path.join(libs_dir, "pyspotify"))
+    sys.path.insert(0, os.path.join(libs_dir, "pyspotify-proxy/src"))
+
+    try:
+        xbmc.log('Testing spotify CFFI import')
+        import spotify._spotify
+        xbmc.log('Import worked!')
+    except ImportError:
+        xbmc.log('Import failed, attempting build')
+        pyspotify_libs_path = os.path.join(libs_dir, "pyspotify")
+        _spotify_build = imp.load_source('_spotify_build', os.path.join(pyspotify_libs_path, "spotify", "_spotify_build.py"))
+        _spotify_build.ffi.compile(pyspotify_libs_path)
 
 
 def has_background_support():

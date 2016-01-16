@@ -23,11 +23,11 @@ import xbmcgui
 from spotimcgui.views import BaseListContainerView
 from spotimcgui.views import album
 from spotimcgui.utils.loaders import load_albumbrowse
-from spotify import search
+from spotify import Search
 from taskutils.decorators import run_in_thread
 
 
-class NewStuffCallbacks(search.SearchCallbacks):
+class NewStuffCallbacks(object):
     def search_complete(self, result):
         xbmc.executebuiltin("Action(Noop)")
 
@@ -45,8 +45,8 @@ class NewStuffView(BaseListContainerView):
     @run_in_thread
     def _initialize(self, session):
         cb = NewStuffCallbacks()
-        self.__search = search.Search(
-            session, 'tag:new', album_count=60, callbacks=cb
+        self.__search = Search(
+            session, 'tag:new', album_count=60, callbacks=cb.search_complete
         )
 
         self.__initialized = True
@@ -59,7 +59,7 @@ class NewStuffView(BaseListContainerView):
 
     def _get_selected_album(self, view_manager):
         pos = self.get_list(view_manager).getSelectedPosition()
-        return self.__search.album(pos)
+        return self.__search.albums[pos]
 
     def _show_album(self, view_manager):
         session = view_manager.get_var('session')
@@ -73,7 +73,7 @@ class NewStuffView(BaseListContainerView):
 
         if albumbrowse is not None:
             playlist_manager = view_manager.get_var('playlist_manager')
-            playlist_manager.play(albumbrowse.tracks(), session)
+            playlist_manager.play(albumbrowse.tracks, session)
 
     def _set_current_album(self, view_manager):
         session = view_manager.get_var('session')
@@ -82,7 +82,7 @@ class NewStuffView(BaseListContainerView):
 
         if albumbrowse is not None:
             playlist_manager = view_manager.get_var('playlist_manager')
-            playlist_manager.set_tracks(albumbrowse.tracks(), session)
+            playlist_manager.set_tracks(albumbrowse.tracks, session)
 
     def click(self, view_manager, control_id):
         #Silently ignore events when not intialized
@@ -128,18 +128,18 @@ class NewStuffView(BaseListContainerView):
         if not self.__initialized:
             return False
 
-        if not self.__search.is_loaded():
+        if not self.__search.is_loaded:
             return False
 
         list_obj = self.get_list(view_manager)
         list_obj.reset()
         playlist_manager = view_manager.get_var('playlist_manager')
 
-        for album in self.__search.albums():
+        for album in self.__search.albums:
             item = xbmcgui.ListItem(
-                album.name(),
-                album.artist().name(),
-                playlist_manager.get_image_url(album.cover())
+                album.name,
+                album.artist.name,
+                playlist_manager.get_image_url(album.cover_link())
             )
             list_obj.addItem(item)
 

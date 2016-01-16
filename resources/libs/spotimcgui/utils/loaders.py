@@ -19,7 +19,7 @@ along with Spotimc.  If not, see <http://www.gnu.org/licenses/>.
 
 import xbmc
 import xbmcgui
-from spotify.utils.loaders import load_albumbrowse as _load_albumbrowse
+from pyspotify_loaders import load_albumbrowse as _load_albumbrowse
 
 
 def load_albumbrowse(session, album):

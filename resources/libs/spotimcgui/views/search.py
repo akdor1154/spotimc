@@ -20,7 +20,7 @@ along with Spotimc.  If not, see <http://www.gnu.org/licenses/>.
 
 import xbmc
 from spotimcgui.views import BaseListContainerView
-from spotify import search, track
+from spotify import Search, Track
 from spotimcgui.views.artists import open_artistbrowse_albums
 from spotimcgui.views.album import AlbumTracksView
 
@@ -33,7 +33,7 @@ def ask_search_term():
         return kb.getText()
 
 
-class SearchTracksCallbacks(search.SearchCallbacks):
+class SearchTracksCallbacks(object):
     def search_complete(self, result):
         xbmc.executebuiltin("Action(Noop)")
 
@@ -58,10 +58,10 @@ class SearchTracksView(BaseListContainerView):
     def _do_search(self, query):
         self.__query = query
         cb = SearchTracksCallbacks()
-        self.__search = search.Search(
+        self.__search = Search(
             self.__session, query,
             track_offset=0, track_count=200,
-            callbacks=cb
+            callback=cb.search_complete
         )
 
     def __init__(self, session, query):
@@ -73,19 +73,19 @@ class SearchTracksView(BaseListContainerView):
         pos = int(item.getProperty('ListIndex'))
 
         if pos is not None:
-            return self.__search.track(pos)
+            return self.__search.tracks[pos]
 
     def _play_selected_track(self, view_manager):
         item = self.get_list(view_manager).getSelectedItem()
         pos = int(item.getProperty('ListIndex'))
         session = view_manager.get_var('session')
         playlist_manager = view_manager.get_var('playlist_manager')
-        playlist_manager.play(self.__search.tracks(), session, pos)
+        playlist_manager.play(self.__search.tracks, session, pos)
 
     def click(self, view_manager, control_id):
         if control_id == SearchTracksView.button_did_you_mean:
             if self.__search.did_you_mean():
-                self._do_search(self.__search.did_you_mean())
+                self._do_search(self.__search.did_you_mean)
                 view_manager.show()
 
         elif control_id == SearchTracksView.button_new_search:
@@ -99,11 +99,11 @@ class SearchTracksView(BaseListContainerView):
 
         elif control_id == SearchTracksView.context_browse_artist_button:
             current_track = self._get_current_track(view_manager)
-            artist_list = [artist for artist in current_track.artists()]
+            artist_list = [artist for artist in current_track.artists]
             open_artistbrowse_albums(view_manager, artist_list)
 
         elif control_id == SearchTracksView.context_browse_album_button:
-            album = self._get_current_track(view_manager).album()
+            album = self._get_current_track(view_manager).album
             session = view_manager.get_var('session')
             v = AlbumTracksView(session, album)
             view_manager.add_view(v)
@@ -115,10 +115,10 @@ class SearchTracksView(BaseListContainerView):
             if current_track is not None:
                 if item.getProperty('IsStarred') == 'true':
                     item.setProperty('IsStarred', 'false')
-                    track.set_starred(self.__session, [current_track], False)
+                    current_track.starred = False
                 else:
                     item.setProperty('IsStarred', 'true')
-                    track.set_starred(self.__session, [current_track], True)
+                    current_track.starred = True
 
     def action(self, view_manager, action_id):
         #Run parent implementation's actions
@@ -144,7 +144,7 @@ class SearchTracksView(BaseListContainerView):
         window = view_manager.get_window()
         window.setProperty("SearchQuery", self.__query)
 
-        did_you_mean = self.__search.did_you_mean()
+        did_you_mean = self.__search.did_you_mean
         if did_you_mean:
             window.setProperty("SearchDidYouMeanStatus", "true")
             window.setProperty("SearchDidYouMeanString", did_you_mean)
@@ -152,7 +152,7 @@ class SearchTracksView(BaseListContainerView):
             window.setProperty("SearchDidYouMeanStatus", "false")
 
     def render(self, view_manager):
-        if self.__search.is_loaded():
+        if self.__search.is_loaded:
             session = view_manager.get_var('session')
             pm = view_manager.get_var('playlist_manager')
 
@@ -164,7 +164,7 @@ class SearchTracksView(BaseListContainerView):
             list_obj.reset()
 
             #Iterate over the tracks
-            for list_index, track in enumerate(self.__search.tracks()):
+            for list_index, track in enumerate(self.__search.tracks):
                 url, info = pm.create_track_info(track, session, list_index)
                 list_obj.addItem(info)
 

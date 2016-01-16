@@ -13,3 +13,6 @@
 [submodule "resources/libs/pyspotify"]
 	path = resources/libs/pyspotify
 	url = https://github.com/mopidy/pyspotify
+[submodule "resources/libs/pyspotify-proxy"]
+	path = resources/libs/pyspotify-proxy
+	url = https://github.com/akdor1154/pyspotify-proxy

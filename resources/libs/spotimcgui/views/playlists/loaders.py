@@ -21,15 +21,15 @@ along with Spotimc.  If not, see <http://www.gnu.org/licenses/>.
 import xbmc
 import weakref
 import threading
-from spotify import playlist, playlistcontainer, ErrorType
-from spotify.utils.iterators import CallbackIterator
+from spotify import Playlist, PlaylistContainer, ErrorType, PlaylistEvent, PlaylistContainerEvent
+from spotimcgui.utils.iterators import CallbackIterator
 from taskutils.decorators import run_in_thread
 from taskutils.threads import current_task
 from taskutils.utils import ConditionList
 from spotimcgui.utils.logs import get_logger
 
 
-class PlaylistCallbacks(playlist.PlaylistCallbacks):
+class PlaylistCallbacks(object):
     __playlist_loader = None
 
     def __init__(self, playlist_loader):
@@ -40,6 +40,10 @@ class PlaylistCallbacks(playlist.PlaylistCallbacks):
 
     def playlist_metadata_updated(self, playlist):
         self.__playlist_loader.check()
+
+    def add_listeners(self, playlist):
+        playlist.on(PlaylistEvent.PLAYLIST_STATE_CHANGED, self.playlist_state_changed)
+        playlist.on(PlaylistEvent.PLAYLIST_METADATA_UPDATED, self.playlist_state_changed)
 
 
 class BasePlaylistLoader:
@@ -70,11 +74,12 @@ class BasePlaylistLoader:
         self.__thumbnails = []
 
         #Fire playlist loading if neccesary
-        if not playlist.is_in_ram(session):
-            playlist.set_in_ram(session, True)
+        if not playlist.is_in_ram:
+            playlist.set_in_ram(True)
 
         #Add the playlist callbacks
-        self.__playlist.add_callbacks(PlaylistCallbacks(self))
+        self.__callbacks = PlaylistCallbacks(self)
+        self.__callbacks.add_listeners(self.__playlist)
 
         #Finish the rest in the background
         self.load_in_background()
@@ -130,10 +135,10 @@ class BasePlaylistLoader:
         return self.__num_tracks
 
     def get_tracks(self):
-        return self.__playlist.tracks()
+        return self.__playlist.tracks
 
     def get_track(self, index):
-        track_list = self.get_tracks()
+        track_list = self.get_tracks
         return track_list[index]
 
     def get_is_collaborative(self):
@@ -141,21 +146,21 @@ class BasePlaylistLoader:
 
     def _track_is_ready(self, track, test_album=True, test_artists=True):
         def album_is_loaded():
-            album = track.album()
-            return album is not None and album.is_loaded()
+            album = track.album
+            return album is not None and album.is_loaded
 
         def artists_are_loaded():
-            for item in track.artists():
-                if item is None or not item.is_loaded():
+            for item in track.artists:
+                if item is None or not item.is_loaded:
                     return False
             return True
 
         #If track has an error stop further processing
-        if track.error() not in [ErrorType.Ok, ErrorType.IsLoading]:
+        if track.error not in [ErrorType.OK, ErrorType.IS_LOADING]:
             return True
 
         #Always test for the track data
-        if not track.is_loaded():
+        if not track.is_loaded:
             return False
 
         #If album data was requested
@@ -171,8 +176,8 @@ class BasePlaylistLoader:
             return True
 
     def _wait_for_playlist(self):
-        if not self.__playlist.is_loaded():
-            self.__conditions.add_condition(self.__playlist.is_loaded)
+        if not self.__playlist.is_loaded:
+            self.__conditions.add_condition(lambda: self.__playlist.is_loaded)
             current_task.condition_wait(self.__conditions, 10)
 
     def _wait_for_track_metadata(self, track):
@@ -189,21 +194,21 @@ class BasePlaylistLoader:
         pm = self.__playlist_manager
 
         #If playlist has an image
-        playlist_image = self.__playlist.get_image()
+        playlist_image = self.__playlist.image
         if playlist_image is not None:
             thumbnails = [pm.get_image_url(playlist_image)]
 
         #Otherwise get them from the album covers
         else:
             thumbnails = []
-            for item in self.__playlist.tracks():
+            for item in self.__playlist.tracks:
                 #Wait until this track is fully loaded
                 self._wait_for_track_metadata(item)
 
                 #Check if item was loaded without errors
-                if item.is_loaded() and item.error() == 0:
+                if item.is_loaded and item.error == 0:
                     #Append the cover if it's new
-                    image_id = item.album().cover()
+                    image_id = item.album.cover_link
                     image_url = pm.get_image_url(image_id)
                     if image_url not in thumbnails:
                         thumbnails.append(image_url)
@@ -223,22 +228,22 @@ class BasePlaylistLoader:
             return True
 
     def _load_name(self):
-        if self.__name != self.__playlist.name():
-            self.__name = self.__playlist.name()
+        if self.__name != self.__playlist.name:
+            self.__name = self.__playlist.name
             return True
         else:
             return False
 
     def _load_num_tracks(self):
-        if self.__num_tracks != self.__playlist.num_tracks():
-            self.__num_tracks = self.__playlist.num_tracks()
+        if self.__num_tracks != len(self.__playlist.tracks):
+            self.__num_tracks = len(self.__playlist.tracks)
             return True
         else:
             return False
 
     def _load_is_collaborative(self):
-        if self.__is_collaborative != self.__playlist.is_collaborative():
-            self.__is_collaborative = self.__playlist.is_collaborative()
+        if self.__is_collaborative != self.__playlist.collaborative:
+            self.__is_collaborative = self.__playlist.collaborative
             return True
         else:
             return False
@@ -392,17 +397,16 @@ class SpecialPlaylistLoader(BasePlaylistLoader):
         playlist = self.get_playlist()
 
         def sort_func(track_index):
-            track = playlist.track(track_index)
-            if track.is_loaded():
-                return -playlist.track_create_time(track_index)
+            playlist_track = playlist.tracks_with_metadata[track_index]
+            return -playlist_track.create_time
 
         track_indexes = range(playlist.num_tracks())
         sorted_indexes = sorted(track_indexes, key=sort_func)
 
-        return [playlist.track(index) for index in sorted_indexes]
+        return [playlist.tracks[index] for index in sorted_indexes]
 
 
-class ContainerCallbacks(playlistcontainer.PlaylistContainerCallbacks):
+class ContainerCallbacks(object):
     __loader = None
 
     def __init__(self, loader):
@@ -422,6 +426,12 @@ class ContainerCallbacks(playlistcontainer.PlaylistContainerCallbacks):
     def playlist_moved(self, container, playlist, position, new_position):
         self.__loader.move_playlist(position, new_position)
         self.__loader.check()
+
+    def add_callbacks(self, container):
+        container.on(PlaylistContainerEvent.PLAYLIST_ADDED, self.playlist_added)
+        container.on(PlaylistContainerEvent.CONTAINER_LOADED, self.container_loaded)
+        container.on(PlaylistContainerEvent.PLAYLIST_REMOVED, self.playlist_removed)
+        container.on(PlaylistContainerEvent.PLAYLIST_MOVED, self.playlist_moved)
 
 
 class ContainerLoader:
@@ -446,7 +456,8 @@ class ContainerLoader:
         self.__is_loaded = False
 
         #Register the callbacks
-        self.__container.add_callbacks(ContainerCallbacks(self))
+        self.__callbacks = ContainerCallbacks(self)
+        self.__callbacks.add_callbacks(self.__container)
 
         #Load the rest in the background
         self.load_in_background()
@@ -463,8 +474,7 @@ class ContainerLoader:
             self.__list_lock.release()
 
     def is_playlist(self, position):
-        playlist_type = self.__container.playlist_type(position)
-        return playlist_type == playlist.PlaylistType.Playlist
+        return isinstance(self.__container[position], Playlist)
 
     def add_playlist(self, playlist, position):
         try:
@@ -517,7 +527,7 @@ class ContainerLoader:
         self._fill_spaces(self.__container.num_playlists() - 1)
 
         #Iterate over the container to add the missing ones
-        for pos, item in enumerate(self.__container.playlists()):
+        for pos, item in enumerate(self.__container):
 
             #Check if we should continue
             current_task().check_status()
@@ -528,11 +538,11 @@ class ContainerLoader:
     def _check_playlist(self, playlist):
         def is_playlist_loaded():
             #If it has errors, say yes.
-            if playlist.has_errors():
+            if playlist.has_errors:
                 return True
 
             #And if it was loaded, say yes
-            if playlist.is_loaded():
+            if playlist.is_loaded:
                 return True
 
         self.__conditions.add_condition(is_playlist_loaded)
@@ -540,7 +550,7 @@ class ContainerLoader:
     def _load_container(self):
 
         #Wait for the container to be fully loaded
-        self.__conditions.add_condition(self.__container.is_loaded)
+        self.__conditions.add_condition(lambda: self.__container.is_loaded)
         current_task().condition_wait(self.__conditions)
 
         #Fill the container with unseen playlists
@@ -548,7 +558,7 @@ class ContainerLoader:
 
         #Add a load check for each playlist
         for item in self.__playlists:
-            if item is not None and not item.is_loaded():
+            if item is not None and not item.is_loaded:
                 self._check_playlist(item)
 
         #Wait until all conditions become true
@@ -561,7 +571,7 @@ class ContainerLoader:
 
         #Check and log errors for not loaded playlists
         for idx, item in enumerate(self.__playlists):
-            if item is not None and item.has_errors():
+            if item is not None and item.has_errors:
                 get_logger().error('Playlist #%s failed loading.' % idx)
 
         #Finally tell the gui we are done

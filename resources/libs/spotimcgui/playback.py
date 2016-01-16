@@ -20,7 +20,7 @@ along with Spotimc.  If not, see <http://www.gnu.org/licenses/>.
 
 import xbmc
 import xbmcgui
-from spotify import link, track, image
+from spotify import Link, Track, Image, TrackAvailability, ImageSize
 import time
 from __main__ import __addon_version__
 import math
@@ -28,7 +28,7 @@ import random
 import settings
 from taskutils.decorators import run_in_thread
 from taskutils.threads import current_task
-from spotify.utils.loaders import load_track
+from spotimcgui.utils.pyspotify_loaders import load_track
 import re
 
 #Cross python version import of urlparse
@@ -85,8 +85,8 @@ class PlaylistManager:
         self.__playlist.clear()
 
     def _get_track_id(self, track):
-        track_link = link.create_from_track(track)
-        return track_link.as_string()[14:]
+        track_link = track.link
+        return track_link.uri[14:]
 
     def _get_url_headers(self):
         if self.__url_headers is None:
@@ -122,53 +122,52 @@ class PlaylistManager:
             return ''
 
     def _calculate_track_rating(self, track):
-        popularity = track.popularity()
+        popularity = track.popularity
         if popularity == 0:
             return 0
         else:
             return int(math.ceil(popularity * 6 / 100.0)) - 1
 
     def _item_is_playable(self, session, track_obj):
-        return track_obj.get_availability(session) == \
-            track.TrackAvailability.Available
+        return track_obj.availability == TrackAvailability.AVAILABLE
 
     def _get_track_images(self, track_obj, session):
 
         #If it's local, let's get the images from the autolinked one
-        if track_obj.is_local(session):
-            track_obj = track_obj.get_playable(session)
+        if track_obj.is_local:
+            track_obj = track_obj.playable
 
         return(
-            self.get_image_url(track_obj.album().cover()),
-            self.get_image_url(track_obj.album().cover(image.ImageSize.Large))
+            self.get_image_url(track_obj.album.cover),
+            self.get_image_url(track_obj.album.cover(ImageSize.Large))
         )
 
     def create_track_info(self, track_obj, session, list_index=None):
 
         #Track is ok
-        if track_obj.is_loaded() and track_obj.error() == 0:
+        if track_obj.is_loaded and track_obj.error == 0:
 
             #Get track attributes
-            album = track_obj.album().name()
-            artist = ', '.join([artist.name() for artist
-                                in track_obj.artists()])
+            album = track_obj.album.name
+            artist = ', '.join([artist.name for artist
+                                in track_obj.artists])
             normal_image, large_image = self._get_track_images(
                 track_obj, session)
             track_url = self.get_track_url(track_obj, list_index)
             rating_points = str(self._calculate_track_rating(track_obj))
 
             item = xbmcgui.ListItem(
-                track_obj.name(),
+                track_obj.name,
                 path=track_url,
                 iconImage=normal_image,
                 thumbnailImage=large_image
             )
             info = {
-                "title": track_obj.name(),
+                "title": track_obj.name,
                 "album": album,
                 "artist": artist,
-                "duration": track_obj.duration() / 1000,
-                "tracknumber": track_obj.index(),
+                "duration": track_obj.duration / 1000,
+                "tracknumber": track_obj.index,
                 "rating": rating_points,
             }
             item.setInfo("music", info)
@@ -223,7 +222,7 @@ class PlaylistManager:
 
     def get_shuffle_status(self):
         #Get it directly from a boolean tag (if possible)
-        if self.is_playing() and len(self.__playlist) > 0:
+        if self.is_playing and len(self.__playlist) > 0:
             return xbmc.getCondVisibility('Playlist.IsRandom')
 
         #Otherwise read it from guisettings.xml
@@ -338,19 +337,19 @@ class PlaylistManager:
         if mo is not None:
 
             #Try loading it as a spotify track
-            link_obj = link.create_from_string("spotify:track:{0}".format(
+            link_obj = sess_obj.get_link("spotify:track:{0}".format(
                 mo.group(1)))
             if link_obj is not None:
                 return load_track(sess_obj, link_obj.as_track())
 
             #Try to parse as a local track
             tmpStr = "spotify:local:{0}".format(mo.group(1))
-            link_obj = link.create_from_string(tmpStr)
+            link_obj = sess_obj.get_link(tmpStr)
             if link_obj is not None:
 
                 #return the autolinked one, instead of the local track
                 local_track = link_obj.as_track()
-                return load_track(sess_obj, local_track.get_playable(sess_obj))
+                return load_track(sess_obj, local_track.playable)
 
     def get_item(self, sess_obj, index):
         item = self.__playlist[index]

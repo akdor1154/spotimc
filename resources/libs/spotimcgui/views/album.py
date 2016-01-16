@@ -21,17 +21,16 @@ along with Spotimc.  If not, see <http://www.gnu.org/licenses/>.
 import xbmc
 import xbmcgui
 from spotimcgui.views import BaseListContainerView, iif
-from spotify import albumbrowse, session, track as _track, image
+from spotify import AlbumBrowser, track as _track, image
 from taskutils.decorators import run_in_thread
 import threading
 
-
-class AlbumCallbacks(albumbrowse.AlbumbrowseCallbacks):
+class AlbumCallbacks(object):
     def albumbrowse_complete(self, albumbrowse):
         xbmc.executebuiltin("Action(Noop)")
 
 
-class MetadataUpdateCallbacks(session.SessionCallbacks):
+class MetadataUpdateCallbacks(object):
 
     __event = None
 
@@ -57,8 +56,8 @@ class AlbumTracksView(BaseListContainerView):
     def __init__(self, session, album):
         self.__list_rendered = False
         self.__update_lock = threading.Lock()
-        cb = AlbumCallbacks()
-        self.__albumbrowse = albumbrowse.Albumbrowse(session, album, cb)
+        cb = AlbumCallbacks().albumbrowse_complete
+        self.__albumbrowse = AlbumBrowser(session, album, cb)
 
     def _play_selected_track(self, view_manager):
         item = self.get_list(view_manager).getSelectedItem()
@@ -68,7 +67,7 @@ class AlbumTracksView(BaseListContainerView):
         if pos is not None:
             session = view_manager.get_var('session')
             playlist_manager = view_manager.get_var('playlist_manager')
-            playlist_manager.play(self.__albumbrowse.tracks(), session, pos)
+            playlist_manager.play(self.__albumbrowse.tracks, session, pos)
 
     def click(self, view_manager, control_id):
         if control_id == AlbumTracksView.list_id:
@@ -80,7 +79,7 @@ class AlbumTracksView(BaseListContainerView):
 
             if pos is not None:
                 session = view_manager.get_var('session')
-                current_track = self.__albumbrowse.track(pos)
+                current_track = self.__albumbrowse.tracks[pos]
 
                 if item.getProperty('IsStarred') == 'true':
                     item.setProperty('IsStarred', 'false')
@@ -110,7 +109,7 @@ class AlbumTracksView(BaseListContainerView):
         return AlbumTracksView.context_menu_id
 
     def _have_multiple_discs(self):
-        for item in self.__albumbrowse.tracks():
+        for item in self.__albumbrowse.tracks:
             if item.disc() > 1:
                 return True
 
@@ -119,8 +118,8 @@ class AlbumTracksView(BaseListContainerView):
     def _set_album_info(self, view_manager):
         window = view_manager.get_window()
         pm = view_manager.get_var('playlist_manager')
-        album = self.__albumbrowse.album()
-        artist = self.__albumbrowse.artist()
+        album = self.__albumbrowse.album
+        artist = self.__albumbrowse.artist
         image_id = album.cover(image.ImageSize.Large)
         window.setProperty("AlbumCover", pm.get_image_url(image_id))
         window.setProperty("AlbumName", album.name())
@@ -157,7 +156,7 @@ class AlbumTracksView(BaseListContainerView):
         session = view_manager.get_var('session')
         num_unavailable = 0
 
-        for index, track_obj in enumerate(self.__albumbrowse.tracks()):
+        for index, track_obj in enumerate(self.__albumbrowse.tracks):
             item_obj = self._get_list_item(list_obj, index)
             item_available = self._item_available(item_obj)
             track_available = self._track_available(session, track_obj)
@@ -200,7 +199,7 @@ class AlbumTracksView(BaseListContainerView):
                 self.__update_lock.release()
 
     def render(self, view_manager):
-        if self.__albumbrowse.is_loaded():
+        if self.__albumbrowse.is_loaded:
             session = view_manager.get_var('session')
             pm = view_manager.get_var('playlist_manager')
             has_unavailable = False
@@ -217,7 +216,7 @@ class AlbumTracksView(BaseListContainerView):
             multiple_discs = self._have_multiple_discs()
 
             #Iterate over the track list
-            for list_index, track_obj in enumerate(self.__albumbrowse.tracks()):
+            for list_index, track_obj in enumerate(self.__albumbrowse.tracks):
                 #If disc was changed add a separator
                 if multiple_discs and last_disc != track_obj.disc():
                     last_disc = track_obj.disc()

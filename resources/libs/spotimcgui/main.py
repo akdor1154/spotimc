@@ -31,9 +31,10 @@ import dialogs
 import playback
 import re
 from appkey import appkey
-from spotify import MainLoop, ConnectionState, ErrorType, Bitrate
-from spotify import track as _track
-from spotify.session import Session, SessionCallbacks
+import spotify
+from spotify import EventLoop, ConnectionState, ErrorType, Bitrate
+from spotify import Track, TrackAvailability
+from spotify.session import Session, SessionEvent
 from spotifyproxy.httpproxy import ProxyRunner
 from spotifyproxy.audio import BufferManager
 from taskutils.decorators import run_in_thread
@@ -45,6 +46,7 @@ from __main__ import __addon_version__, __addon_path__
 from utils.logs import get_logger, setup_logging
 from utils.gui import hide_busy_dialog, show_busy_dialog
 
+import pydevd
 
 class Application:
     __vars = None
@@ -65,16 +67,14 @@ class Application:
         del self.__vars[name]
 
 
-class SpotimcCallbacks(SessionCallbacks):
-    __mainloop = None
+class SpotimcCallbacks(object):
     __audio_buffer = None
     __logout_event = None
     __app = None
     __logger = None
     __log_regex = None
 
-    def __init__(self, mainloop, audio_buffer, app):
-        self.__mainloop = mainloop
+    def __init__(self, audio_buffer, app):
         self.__audio_buffer = audio_buffer
         self.__app = app
         self.__logger = get_logger()
@@ -89,7 +89,7 @@ class SpotimcCallbacks(SessionCallbacks):
         self.__app.set_var('login_last_error', error_num)
 
         #Take action if error status is not ok
-        if error_num != ErrorType.Ok:
+        if error_num != ErrorType.OK:
 
             #Close the main window if it's running
             if self.__app.has_var('main_window'):
@@ -142,7 +142,7 @@ class SpotimcCallbacks(SessionCallbacks):
         self.__audio_buffer.set_track_ended()
 
     def notify_main_thread(self, session):
-        self.__mainloop.notify()
+        session.process_events()
 
     def music_delivery(self, session, data, num_samples, sample_type,
                        sample_rate, num_channels):
@@ -153,6 +153,19 @@ class SpotimcCallbacks(SessionCallbacks):
 
         #Set the apropiate event flag, if available
         self.__app.get_var('connstate_event').set()
+
+    def add_callbacks(self, session):
+        session.on(SessionEvent.LOGGED_IN, self.logged_in)
+        session.on(SessionEvent.LOGGED_OUT, self.logged_out)
+        session.on(SessionEvent.CONNECTION_ERROR, self.connection_error)
+        session.on(SessionEvent.MESSAGE_TO_USER, self.message_to_user)
+        session.on(SessionEvent.LOG_MESSAGE, self.log_message)
+        session.on(SessionEvent.STREAMING_ERROR, self.streaming_error)
+        session.on(SessionEvent.PLAY_TOKEN_LOST, self.play_token_lost)
+        session.on(SessionEvent.END_OF_TRACK, self.end_of_track)
+        session.on(SessionEvent.NOTIFY_MAIN_THREAD, self.notify_main_thread)
+        session.on(SessionEvent.MUSIC_DELIVERY, self.music_delivery)
+        session.on(SessionEvent.CONNECTION_STATE_UPDATED, self.connectionstate_changed)
 
 
 class MainLoopRunner(threading.Thread):
@@ -166,10 +179,10 @@ class MainLoopRunner(threading.Thread):
         self.__session = weakref.proxy(session)
 
     def run(self):
-        self.__mainloop.loop(self.__session)
+        self.__mainloop.start()
 
     def stop(self):
-        self.__mainloop.quit()
+        self.__mainloop.stop()
         self.join(10)
 
 
@@ -261,40 +274,50 @@ def set_settings(settings_obj, session):
 
     #Bitrate config
     br_map = {
-        StreamQuality.Low: Bitrate.Rate96k,
-        StreamQuality.Medium: Bitrate.Rate160k,
-        StreamQuality.High: Bitrate.Rate320k,
+        StreamQuality.Low: Bitrate.BITRATE_96k,
+        StreamQuality.Medium: Bitrate.BITRATE_160k,
+        StreamQuality.High: Bitrate.BITRATE_320k,
     }
     session.preferred_bitrate(br_map[settings_obj.get_audio_quality()])
 
     #And volume normalization
-    session.set_volume_normalization(settings_obj.get_audio_normalize())
+    session.volume_normalization = settings_obj.get_audio_normalize()
 
-    #And volume normalization
-    session.set_volume_normalization(settings_obj.get_audio_normalize())
 
 
 def do_login(session, script_path, skin_dir, app):
     #Get the last error if we have one
+    xbmc.log('doing login')
     if app.has_var('login_last_error'):
         prev_error = app.get_var('login_last_error')
     else:
         prev_error = 0
 
+    xbmc.log('checked errors')
+
     #If no previous errors and we have a remembered user
-    if prev_error == 0 and session.remembered_user() is not None:
+    if prev_error == 0 and session.remembered_user_name is not None:
         session.relogin()
         status = True
+        xbmc.log('existing user check done')
 
     #Otherwise let's do a normal login process
     else:
+        xbmc.log('doing loginwindow')
         loginwin = dialogs.LoginWindow(
             "login-window.xml", script_path, skin_dir
         )
         loginwin.initialize(session, app)
-        loginwin.doModal()
+        xbmc.log('going modal')
+        try:
+            loginwin.doModal()
+        except Exception as e:
+            xbmc.log('error!')
+            xbmc.log(e)
+        xbmc.log('modal done')
         status = not loginwin.is_cancelled()
 
+    xbmc.log('returning')
     return status
 
 
@@ -306,16 +329,19 @@ def login_get_last_error(app):
 
 
 def wait_for_connstate(session, app, state):
-
+    xbmc.log('waiting')
     #Store the previous login error number
     last_login_error = login_get_last_error(app)
 
+    xbmc.log('got error')
     #Add a shortcut to the connstate event
     cs = app.get_var('connstate_event')
 
+    xbmc.log('got cs')
     #Wrap all the tests for the following loop
     def continue_loop():
 
+        xbmc.log('looping from start..')
         #Get the current login error
         cur_login_error = login_get_last_error(app)
 
@@ -325,18 +351,19 @@ def wait_for_connstate(session, app, state):
         #  * No login errors where detected
         return (
             not app.get_var('exit_requested') and
-            session.connectionstate() != state and (
+            session.connection.state != state and (
                 last_login_error == cur_login_error or
-                cur_login_error == ErrorType.Ok
+                cur_login_error == ErrorType.OK
             )
         )
 
     #Keep testing until conditions are met
     while continue_loop():
+        xbmc.log('waiting..')
         cs.wait(5)
         cs.clear()
 
-    return session.connectionstate() == state
+    return session.connection.state == state
 
 
 def get_preloader_callback(session, playlist_manager, buffer):
@@ -345,8 +372,8 @@ def get_preloader_callback(session, playlist_manager, buffer):
     def preloader():
         next_track = playlist_manager.get_next_item(session)
         if next_track is not None:
-            ta = next_track.get_availability(session)
-            if ta == _track.TrackAvailability.Available:
+            ta = next_track.availability
+            if ta == TrackAvailability.Available:
                 buffer.open(session, next_track)
 
     return preloader
@@ -354,51 +381,86 @@ def get_preloader_callback(session, playlist_manager, buffer):
 
 def gui_main(addon_dir):
     #Initialize app var storage
+
+    pydevd.settrace('localhost', port=5555, stdoutToServer=True, stderrToServer=True)
+
+    xbmc.log('gui_main reached!')
     app = Application()
+    xbmc.log('application reached!')
     logout_event = Event()
+    xbmc.log('logout reached!')
     connstate_event = Event()
+    xbmc.log('constate reached!')
     info_value_manager = InfoValueManager()
+    xbmc.log('valman reached!')
     app.set_var('logout_event', logout_event)
-    app.set_var('login_last_error', ErrorType.Ok)
+    app.set_var('login_last_error', ErrorType.OK)
     app.set_var('connstate_event', connstate_event)
     app.set_var('exit_requested', False)
     app.set_var('info_value_manager', info_value_manager)
 
+    xbmc.log('vars set!')
     #Check needed directories first
     data_dir, cache_dir, settings_dir = check_dirs()
 
+    xbmc.log('dirs checked!')
     #Instantiate the settings obj
     settings_obj = SettingsManager()
 
+    xbmc.log('settings made!')
     #Show legal warning
     show_legal_warning(settings_obj)
 
+    xbmc.log('legal reached!')
     #Start checking the version
     check_addon_version(settings_obj)
 
+    xbmc.log('version reached!')
     #Don't set cache folder if it's disabled
     if not settings_obj.get_cache_status():
         cache_dir = ''
 
+
+    xbmc.log('spotify reached!')
+
     #Initialize spotify stuff
-    ml = MainLoop()
     buf = BufferManager(get_audio_buffer_size())
-    callbacks = SpotimcCallbacks(ml, buf, app)
-    sess = Session(
-        callbacks,
-        app_key=appkey,
-        user_agent="python ctypes bindings",
-        settings_location=settings_dir,
-        cache_location=cache_dir,
-        initially_unload_playlists=False,
-    )
+    xbmc.log('buffermanager created!')
+    callbacks = SpotimcCallbacks(buf, app)
+
+    xbmc.log('spotimc callbacks made!')
+    session_config = spotify.Config()
+    xbmc.log('appkey reached')
+    session_config.application_key = bytes(bytearray(appkey))
+    xbmc.log('appkey set')
+    session_config.user_agent = "python ctypes bindings"
+    xbmc.log('agent set')
+    session_config.cache_location = cache_dir
+    xbmc.log('cache reached')
+    session_config.settings_location = settings_dir
+    xbmc.log('settings reached')
+    session_config.initially_unload_playlists = False
+
+    xbmc.log('about to make session')
+    sess = Session(session_config)
+
+    xbmc.log('session created!')
+    callbacks.add_callbacks(sess)
+
+    xbmc.log('callbacks registered!')
+
+
+    ml = EventLoop(sess)
+    xbmc.log('eventloop created!')
 
     #Now that we have a session, set settings
     set_settings(settings_obj, sess)
-
+    xbmc.log('settings set!')
     #Initialize libspotify's main loop handler on a separate thread
     ml_runner = MainLoopRunner(ml, sess)
+    xbmc.log('mainlooprunner created!')
     ml_runner.start()
+    xbmc.log('mainlooprunner started!')
 
     #Stay on the application until told to do so
     while not app.get_var('exit_requested'):
@@ -407,9 +469,11 @@ def gui_main(addon_dir):
         if not do_login(sess, addon_dir, "DefaultSkin", app):
             app.set_var('exit_requested', True)
 
-        #Otherwise block until state is sane, and continue
-        elif wait_for_connstate(sess, app, ConnectionState.LoggedIn):
+            xbmc.log('login failed!!')
 
+        #Otherwise block until state is sane, and continue
+        elif wait_for_connstate(sess, app, ConnectionState.LOGGED_IN):
+            xbmc.log('connected!')
             proxy_runner = ProxyRunner(sess, buf, host='127.0.0.1',
                                        allow_ranges=True)
             proxy_runner.start()
@@ -454,7 +518,7 @@ def gui_main(addon_dir):
             gc.collect()
 
             #Logout
-            if sess.user() is not None:
+            if sess.user is not None:
                 sess.logout()
                 logout_event.wait(10)
 
@@ -484,7 +548,6 @@ def main():
         from skinutils import reload_skin
         from skinutils.fonts import FontManager
         from skinutils.includes import IncludeManager
-        from _spotify import unload_library
 
         #Add the system specific library path
         set_dll_paths('resources/dlls')
@@ -526,8 +589,6 @@ def main():
             traceback.print_exc()
 
     finally:
-
-        unload_library("libspotify")
 
         #Cleanup includes and fonts
         if im is not None:

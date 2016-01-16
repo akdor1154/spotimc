@@ -19,10 +19,10 @@ along with Spotimc.  If not, see <http://www.gnu.org/licenses/>.
 
 
 import xbmc
-from spotify import artistbrowse, albumbrowse, link
-from spotify.album import AlbumType as SpotifyAlbumType
-from spotify.track import TrackAvailability
-from spotify.artistbrowse import BrowseType
+from spotify import ArtistBrowser, AlbumBrowser, Link
+from spotify import AlbumType as SpotifyAlbumType, TrackAvailability
+from spotify import ArtistBrowserType
+
 from taskutils.decorators import run_in_thread
 from taskutils.threads import current_task
 from taskutils.utils import ConditionList
@@ -36,7 +36,7 @@ class AlbumType:
     AppearsIn = 3
 
 
-class AlbumCallbacks(albumbrowse.AlbumbrowseCallbacks):
+class AlbumCallbacks(object):
     __task = None
 
     def __init__(self, task):
@@ -46,7 +46,7 @@ class AlbumCallbacks(albumbrowse.AlbumbrowseCallbacks):
         self.__task.notify()
 
 
-class ArtistCallbacks(artistbrowse.ArtistbrowseCallbacks):
+class ArtistCallbacks(object):
     __artistalbumloader = None
 
     def __init__(self, artistalbumloader):
@@ -82,7 +82,7 @@ class ArtistAlbumLoader:
 
     def _wait_for_album_info(self, album_info):
         def info_is_loaded():
-            return album_info.is_loaded()
+            return album_info.is_loaded
 
         if not info_is_loaded():
             current_task().condition_wait(info_is_loaded, 10)
@@ -91,27 +91,27 @@ class ArtistAlbumLoader:
         count = 0
 
         #Return true if it has at least one playable track
-        for track in album_info.tracks():
-            track_status = track.get_availability(self.__session)
-            if track_status == TrackAvailability.Available:
+        for track in album_info.tracks:
+            track_status = track.availability
+            if track_status == TrackAvailability.AVAILABLE:
                 count += 1
 
         return count
 
     def _is_same_artist(self, artist1, artist2):
-        album1_str = link.create_from_artist(artist1).as_string()
-        album2_str = link.create_from_artist(artist2).as_string()
+        album1_str = artist1.link.uri
+        album2_str = artist2.link.uri
 
         return album1_str == album2_str
 
     def _get_album_type(self, album):
-        if album.type() == SpotifyAlbumType.Single:
+        if album.type() == SpotifyAlbumType.SINGLE:
             return AlbumType.Single
 
-        elif album.type() == SpotifyAlbumType.Compilation:
+        elif album.type() == SpotifyAlbumType.COMPILATION:
             return AlbumType.Compilation
 
-        if not self._is_same_artist(self.__artist, album.artist()):
+        if not self._is_same_artist(self.__artist, album.artist):
             return AlbumType.AppearsIn
 
         else:
@@ -121,7 +121,7 @@ class ArtistAlbumLoader:
     def load_album_info(self, index, album):
 
         # Directly discard unavailable albums
-        if not album.is_available():
+        if not album.is_available:
             self.__album_data[index] = {
                 'available_tracks': 0,
                 'type': self._get_album_type(album),
@@ -130,7 +130,7 @@ class ArtistAlbumLoader:
         # Otherwise load its data
         else:
             cb = AlbumCallbacks(current_task())
-            album_info = albumbrowse.Albumbrowse(self.__session, album, cb)
+            album_info = AlbumBrowser(self.__session, album, cb.albumbrowse_complete)
 
             # Now wait until it's loaded
             self._wait_for_album_info(album_info)
@@ -147,14 +147,14 @@ class ArtistAlbumLoader:
     def _wait_for_album_list(self):
 
         #Add the artistbrowse callbacks
-        self.__artistbrowse = artistbrowse.Artistbrowse(
+        self.__artistbrowse = ArtistBrowser(
             self.__session, self.__artist,
-            BrowseType.NoTracks, ArtistCallbacks(self)
+            ArtistBrowserType.NO_TRACKS, ArtistCallbacks(self).artistbrowse_complete
         )
 
-        if not self.__artistbrowse.is_loaded():
+        if not self.__artistbrowse.is_loaded:
             current_task().condition_wait(
-                self.__artistbrowse.is_loaded, 60  # Should be enough?
+                lambda: self.__artistbrowse.is_loaded, 60  # Should be enough?
             )
 
     def _add_album_processed_check(self, index):
@@ -174,7 +174,7 @@ class ArtistAlbumLoader:
         self._wait_for_album_list()
 
         # Now load albumbrowse data from each one
-        for index, album in enumerate(self.__artistbrowse.albums()):
+        for index, album in enumerate(self.__artistbrowse.albums):
 
             # Add a condition for the next wait
             self._add_album_processed_check(index)
@@ -199,13 +199,13 @@ class ArtistAlbumLoader:
         return self.__album_data[index]['type']
 
     def get_album(self, index):
-        return self.__artistbrowse.album(index)
+        return self.__artistbrowse.albums[index]
 
     def get_non_similar_albums(self):
         name_dict = {}
 
         for index, album in self.get_albums():
-            name = album.name()
+            name = album.name
             available_tracks = self.get_album_available_tracks(index)
 
             # If that name is new to us just store it
@@ -224,7 +224,7 @@ class ArtistAlbumLoader:
             # Sort by album type and then by year (desc)
             return (
                 self.get_album_type(album_index),
-                -self.__artistbrowse.album(album_index).year()
+                -self.__artistbrowse.albums[album_index].year
             )
 
         # Do nothing if is loading
@@ -235,7 +235,7 @@ class ArtistAlbumLoader:
                 sorted_indexes = sorted(album_indexes, key=sort_func)
                 ab = self.__artistbrowse
                 self.__sorted_albums = [
-                    (index, ab.album(index)) for index in sorted_indexes
+                    (index, ab.albums[index]) for index in sorted_indexes
                 ]
 
             return self.__sorted_albums
