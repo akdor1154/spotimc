@@ -4,15 +4,12 @@
 [submodule "resources/libs/xbmc-skinutils"]
 	path = resources/libs/xbmc-skinutils
 	url = https://github.com/mazkolain/xbmc-skinutils.git
-[submodule "resources/libs/pyspotify-ctypes"]
-	path = resources/libs/pyspotify-ctypes
-	url = https://github.com/mazkolain/pyspotify-ctypes.git
-[submodule "resources/libs/pyspotify-ctypes-proxy"]
-	path = resources/libs/pyspotify-ctypes-proxy
-	url = https://github.com/mazkolain/pyspotify-ctypes-proxy.git
 [submodule "resources/libs/taskutils"]
 	path = resources/libs/taskutils
 	url = https://github.com/mazkolain/taskutils.git
 [submodule "resources/dlls"]
 	path = resources/dlls
 	url = https://github.com/mazkolain/spotify-libs.git
+[submodule "resources/libs/pyspotify"]
+	path = resources/libs/pyspotify
+	url = https://github.com/mopidy/pyspotify
